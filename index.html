@@ -1,0 +1,469 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Download, Plus, Trash2, FileText, Settings, User, Briefcase, Calendar } from 'lucide-react';
+
+// 將 InputGroup 移到 App 元件外部，避免重新渲染時失去焦點
+const InputGroup = ({ label, value, onChange, placeholder, type = "text" }) => (
+  <div className="flex flex-col mb-3">
+    <label className="text-sm font-medium text-gray-700 mb-1">{label}</label>
+    <input
+      type={type}
+      className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+    />
+  </div>
+);
+
+const App = () => {
+  // 動態載入 html2canvas
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+    script.async = true;
+    document.body.appendChild(script);
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, []);
+
+  // 取得今天的日期字串 (YYYY-MM-DD)
+  const getToday = () => new Date().toISOString().split('T')[0];
+  
+  // 取得 14 天後的日期
+  const getValidDate = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 14);
+    return d.toISOString().split('T')[0];
+  };
+
+  // 生成預設報價單號
+  const generateQuoteNumber = () => {
+    const d = new Date();
+    const year = d.getFullYear().toString().slice(-2);
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    return `QT${year}${month}${day}-${random}`;
+  };
+
+  // --- 狀態管理 ---
+  
+  // 報價單設定
+  const [meta, setMeta] = useState({
+    quoteNumber: generateQuoteNumber(),
+    date: getToday(),
+    validUntil: getValidDate(),
+    hasTax: true, // 是否含稅 (計算5%營業稅)
+  });
+
+  // 甲方 (客戶)
+  const [buyer, setBuyer] = useState({
+    company: '',
+    taxId: '',
+    address: '',
+    owner: '',
+    contact: '',
+    phone: '',
+  });
+
+  // 乙方 (我們 - 電商神助手)
+  const [seller, setSeller] = useState({
+    company: '電商神助手',
+    taxId: '',
+    address: '',
+    owner: '',
+    contact: '',
+    phone: '',
+  });
+
+  // 產品項目
+  const [items, setItems] = useState([
+    { id: 1, name: '品牌官方網站建置', model: 'WEB-PRO', quantity: 1, unit: '式', price: 68000 },
+  ]);
+
+  // 報價說明 / 備註
+  const [notes, setNotes] = useState(
+    "1. 本報價單有效期限為自報價日起算 14 天內。\n" +
+    "2. 付款方式：確認報價後請先匯款 50% 訂金，專案結案交付後結清 50% 尾款。\n" +
+    "3. 匯款資訊：\n   銀行：(824) 連線銀行\n   戶名：張凱軍\n   帳號：111006760679\n" +
+    "4. 本報價內容視為機密，請勿向第三方透露。"
+  );
+
+  const [isExporting, setIsExporting] = useState(false);
+
+  // --- 處理函數 ---
+
+  const handleItemChange = (id, field, value) => {
+    setItems(items.map(item => item.id === id ? { ...item, [field]: value } : item));
+  };
+
+  const addItem = () => {
+    setItems([...items, { id: Date.now(), name: '', model: '', quantity: 1, unit: '件', price: 0 }]);
+  };
+
+  const removeItem = (id) => {
+    if (items.length > 1) {
+      setItems(items.filter(item => item.id !== id));
+    }
+  };
+
+  // --- 計算金額 ---
+  // 當含稅時，輸入的單價視為「含稅價」，總價即為各項目加總
+  // 銷售合計 = 總價 / 1.05，稅額 = 總價 - 銷售合計
+  const rawTotal = items.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
+  const subtotal = meta.hasTax ? Math.round(rawTotal / 1.05) : rawTotal;
+  const tax = meta.hasTax ? rawTotal - subtotal : 0;
+  const total = rawTotal;
+
+  // --- 匯出圖片 ---
+  const exportAsImage = async () => {
+    if (!window.html2canvas) {
+      alert("載入截圖工具中，請稍候再試...");
+      return;
+    }
+    
+    setIsExporting(true);
+    try {
+      const element = document.getElementById('quotation-preview');
+      const canvas = await window.html2canvas(element, {
+        scale: 2, // 提高畫質
+        useCORS: true,
+        backgroundColor: '#ffffff'
+      });
+      
+      const dataUrl = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.download = `報價單_${meta.quoteNumber}_${buyer.company || '客戶'}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (error) {
+      console.error('輸出圖片失敗:', error);
+      alert('輸出圖片失敗，請檢查瀏覽器設定。');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col md:flex-row font-sans text-gray-800">
+      
+      {/* 左側：編輯區 */}
+      <div className="w-full md:w-1/2 lg:w-5/12 bg-white shadow-xl z-10 overflow-y-auto h-screen p-6 border-r border-gray-200">
+        <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-200">
+          <div className="flex items-center gap-2 text-blue-600">
+            <FileText size={24} />
+            <h1 className="text-xl font-bold">電商神助手 報價工具</h1>
+          </div>
+          <button 
+            onClick={exportAsImage}
+            disabled={isExporting}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-white font-medium transition-colors ${
+              isExporting ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+            }`}
+          >
+            <Download size={18} />
+            {isExporting ? '生成中...' : '輸出圖片'}
+          </button>
+        </div>
+
+        <div className="space-y-8">
+          {/* 基本設定 */}
+          <section>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-gray-800">
+              <Calendar size={20} className="text-blue-500"/> 報價單設定
+            </h2>
+            <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg">
+              <InputGroup label="報價單號" value={meta.quoteNumber} onChange={(v) => setMeta({...meta, quoteNumber: v})} />
+              <InputGroup label="報價日期" type="date" value={meta.date} onChange={(v) => setMeta({...meta, date: v})} />
+              <InputGroup label="有效期限" type="date" value={meta.validUntil} onChange={(v) => setMeta({...meta, validUntil: v})} />
+              <div className="flex flex-col mb-3 justify-center">
+                <label className="text-sm font-medium text-gray-700 mb-2">稅額計算</label>
+                <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="tax" checked={meta.hasTax} onChange={() => setMeta({...meta, hasTax: true})} className="w-4 h-4 text-blue-600" />
+                  <span className="text-sm">含稅 (5%)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="tax" checked={!meta.hasTax} onChange={() => setMeta({...meta, hasTax: false})} className="w-4 h-4 text-blue-600" />
+                  <span className="text-sm">未稅</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* 客戶資訊 (甲方) */}
+        <section>
+          <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-gray-800">
+            <User size={20} className="text-blue-500"/> 客戶資訊 (甲方)
+          </h2>
+          <div className="grid grid-cols-2 gap-x-4">
+            <InputGroup label="公司名稱 (選填)" value={buyer.company} onChange={(v) => setBuyer({...buyer, company: v})} placeholder="客戶公司全名" />
+            <InputGroup label="統一編號 (選填)" value={buyer.taxId} onChange={(v) => setBuyer({...buyer, taxId: v})} placeholder="8碼數字" />
+            <div className="col-span-2">
+              <InputGroup label="聯絡地址 (選填)" value={buyer.address} onChange={(v) => setBuyer({...buyer, address: v})} placeholder="客戶公司或聯絡地址" />
+            </div>
+            <InputGroup label="負責人 (選填)" value={buyer.owner} onChange={(v) => setBuyer({...buyer, owner: v})} placeholder="負責人姓名" />
+            <InputGroup label="聯絡人/姓名 (必填)" value={buyer.contact} onChange={(v) => setBuyer({...buyer, contact: v})} placeholder="專案聯絡人" />
+            <InputGroup label="聯絡電話 (必填)" value={buyer.phone} onChange={(v) => setBuyer({...buyer, phone: v})} placeholder="電話或手機" />
+          </div>
+        </section>
+
+        {/* 我們資訊 (乙方) */}
+        <section>
+          <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-gray-800">
+            <Briefcase size={20} className="text-blue-500"/> 我方資訊 (乙方)
+          </h2>
+          <div className="grid grid-cols-2 gap-x-4">
+            <InputGroup label="公司/品牌名稱 (選填)" value={seller.company} onChange={(v) => setSeller({...seller, company: v})} />
+            <InputGroup label="統一編號 (選填)" value={seller.taxId} onChange={(v) => setSeller({...seller, taxId: v})} placeholder="選填" />
+            <div className="col-span-2">
+              <InputGroup label="聯絡地址 (選填)" value={seller.address} onChange={(v) => setSeller({...seller, address: v})} placeholder="選填" />
+            </div>
+            <InputGroup label="負責人 (選填)" value={seller.owner} onChange={(v) => setSeller({...seller, owner: v})} placeholder="選填" />
+            <InputGroup label="聯絡人/您的姓名 (必填)" value={seller.contact} onChange={(v) => setSeller({...seller, contact: v})} placeholder="您的姓名" />
+            <InputGroup label="聯絡電話 (必填)" value={seller.phone} onChange={(v) => setSeller({...seller, phone: v})} placeholder="您的電話" />
+          </div>
+        </section>
+
+        {/* 產品與報價項目 */}
+        <section>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-gray-800">
+              <User size={20} className="text-blue-500"/> 客戶資訊 (甲方)
+            </h2>
+            <div className="grid grid-cols-2 gap-x-4">
+              <InputGroup label="公司名稱" value={buyer.company} onChange={(v) => setBuyer({...buyer, company: v})} placeholder="客戶公司全名" />
+              <InputGroup label="統一編號" value={buyer.taxId} onChange={(v) => setBuyer({...buyer, taxId: v})} placeholder="8碼數字" />
+              <div className="col-span-2">
+                <InputGroup label="公司地址" value={buyer.address} onChange={(v) => setBuyer({...buyer, address: v})} placeholder="客戶公司地址" />
+              </div>
+              <InputGroup label="負責人" value={buyer.owner} onChange={(v) => setBuyer({...buyer, owner: v})} placeholder="負責人姓名" />
+              <InputGroup label="聯絡人" value={buyer.contact} onChange={(v) => setBuyer({...buyer, contact: v})} placeholder="專案聯絡人" />
+              <InputGroup label="聯絡電話" value={buyer.phone} onChange={(v) => setBuyer({...buyer, phone: v})} placeholder="電話或手機" />
+            </div>
+          </section>
+
+          {/* 我們資訊 (乙方) */}
+          <section>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-gray-800">
+              <Briefcase size={20} className="text-blue-500"/> 我方資訊 (乙方)
+            </h2>
+            <div className="grid grid-cols-2 gap-x-4">
+              <InputGroup label="公司/品牌名稱" value={seller.company} onChange={(v) => setSeller({...seller, company: v})} />
+              <InputGroup label="統一編號" value={seller.taxId} onChange={(v) => setSeller({...seller, taxId: v})} placeholder="選填" />
+              <div className="col-span-2">
+                <InputGroup label="公司地址" value={seller.address} onChange={(v) => setSeller({...seller, address: v})} placeholder="選填" />
+              </div>
+              <InputGroup label="負責人" value={seller.owner} onChange={(v) => setSeller({...seller, owner: v})} placeholder="選填" />
+              <InputGroup label="聯絡人" value={seller.contact} onChange={(v) => setSeller({...seller, contact: v})} placeholder="您的姓名" />
+              <InputGroup label="聯絡電話" value={seller.phone} onChange={(v) => setSeller({...seller, phone: v})} placeholder="您的電話" />
+            </div>
+          </section>
+
+          {/* 產品與報價項目 */}
+          <section>
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-gray-800">
+              <Settings size={20} className="text-blue-500"/> 報價項目
+            </h2>
+            
+            {items.map((item, index) => (
+              <div key={item.id} className="bg-gray-50 p-4 rounded-lg mb-3 border border-gray-200 relative group">
+                <button 
+                  onClick={() => removeItem(item.id)}
+                  className="absolute top-2 right-2 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="移除項目"
+                >
+                  <Trash2 size={18} />
+                </button>
+                <div className="grid grid-cols-12 gap-3">
+                  <div className="col-span-12 md:col-span-7">
+                    <label className="text-xs font-medium text-gray-500 mb-1 block">產品/服務名稱</label>
+                    <input type="text" className="w-full px-2 py-1.5 border rounded text-sm" value={item.name} onChange={(e) => handleItemChange(item.id, 'name', e.target.value)} placeholder="例如：網站設計" />
+                  </div>
+                  <div className="col-span-12 md:col-span-5">
+                    <label className="text-xs font-medium text-gray-500 mb-1 block">型號/規格</label>
+                    <input type="text" className="w-full px-2 py-1.5 border rounded text-sm" value={item.model} onChange={(e) => handleItemChange(item.id, 'model', e.target.value)} placeholder="選填" />
+                  </div>
+                  
+                  <div className="col-span-4 md:col-span-3">
+                    <label className="text-xs font-medium text-gray-500 mb-1 block">數量</label>
+                    <input type="number" min="1" className="w-full px-2 py-1.5 border rounded text-sm" value={item.quantity} onChange={(e) => handleItemChange(item.id, 'quantity', e.target.value)} />
+                  </div>
+                  <div className="col-span-4 md:col-span-3">
+                    <label className="text-xs font-medium text-gray-500 mb-1 block">單位</label>
+                    <input type="text" className="w-full px-2 py-1.5 border rounded text-sm" value={item.unit} onChange={(e) => handleItemChange(item.id, 'unit', e.target.value)} />
+                  </div>
+                  <div className="col-span-4 md:col-span-6">
+                    <label className="text-xs font-medium text-gray-500 mb-1 block">單價 (NT$)</label>
+                    <input type="number" className="w-full px-2 py-1.5 border rounded text-sm" value={item.price} onChange={(e) => handleItemChange(item.id, 'price', e.target.value)} />
+                  </div>
+                </div>
+              </div>
+            ))}
+            
+            <button 
+              onClick={addItem}
+              className="w-full py-2 border-2 border-dashed border-blue-300 text-blue-600 rounded-lg flex items-center justify-center gap-2 hover:bg-blue-50 transition-colors font-medium text-sm mt-2"
+            >
+              <Plus size={16} /> 新增項目
+            </button>
+          </section>
+
+          {/* 報價說明 */}
+          <section className="pb-8">
+            <h2 className="text-lg font-bold flex items-center gap-2 mb-4 text-gray-800">
+              <FileText size={20} className="text-blue-500"/> 報價說明與條款
+            </h2>
+            <textarea
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm h-32 leading-relaxed"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </section>
+        </div>
+      </div>
+
+      {/* 右側：預覽區 (A4 比例與樣式) */}
+      <div className="w-full md:w-1/2 lg:w-7/12 bg-gray-200 overflow-y-auto h-screen p-4 md:p-8 flex justify-center items-start">
+        
+        {/* 真實要被截圖的容器 */}
+        <div 
+          id="quotation-preview" 
+          className="bg-white w-full max-w-[800px] shadow-sm flex flex-col relative"
+          style={{ minHeight: '1131px', padding: '40px 50px' }} // 約 A4 比例
+        >
+          {/* Header */}
+          <div className="flex justify-between items-end border-b-2 border-blue-800 pb-4 mb-8">
+            <div>
+              <h1 className="text-3xl font-black text-gray-800 tracking-widest">
+                {seller.company ? seller.company : (seller.contact ? seller.contact : '報價單')}
+              </h1>
+              <div className="text-gray-500 tracking-widest text-sm mt-1">
+                {(seller.company || seller.contact) ? '報 價 單 QUOTATION' : 'QUOTATION'}
+              </div>
+            </div>
+            <div className="text-right text-sm">
+              <div className="flex justify-end gap-2 mb-1"><span className="text-gray-500">報價單號：</span><span className="font-medium">{meta.quoteNumber}</span></div>
+              <div className="flex justify-end gap-2 mb-1"><span className="text-gray-500">報價日期：</span><span>{meta.date}</span></div>
+              <div className="flex justify-end gap-2"><span className="text-gray-500">有效期限：</span><span className="text-red-600 font-medium">{meta.validUntil}</span></div>
+            </div>
+          </div>
+
+          {/* Info Section */}
+          <div className="flex flex-row justify-between mb-8 text-sm leading-relaxed">
+            {/* 買方資訊 */}
+            <div className="w-[48%]">
+              <div className="bg-blue-800 text-white px-3 py-1.5 font-bold mb-3 rounded-sm flex items-center">
+                客戶資訊 (甲方)
+              </div>
+              <div className="grid grid-cols-[70px_1fr] gap-y-1.5 px-2">
+                {buyer.company && <><span className="text-gray-500">公司/單位</span><span className="font-bold text-gray-800">{buyer.company}</span></>}
+                {buyer.taxId && <><span className="text-gray-500">統一編號</span><span className="text-gray-800">{buyer.taxId}</span></>}
+                {buyer.address && <><span className="text-gray-500">聯絡地址</span><span className="text-gray-800">{buyer.address}</span></>}
+                {buyer.owner && <><span className="text-gray-500">負責人</span><span className="text-gray-800">{buyer.owner}</span></>}
+                <><span className="text-gray-500">聯絡人</span><span className="text-gray-800 font-medium">{buyer.contact || '_________________'}</span></>
+                <><span className="text-gray-500">聯絡電話</span><span className="text-gray-800">{buyer.phone || '_________________'}</span></>
+              </div>
+            </div>
+
+            {/* 賣方資訊 */}
+            <div className="w-[48%]">
+              <div className="bg-gray-200 text-gray-800 px-3 py-1.5 font-bold mb-3 rounded-sm flex items-center">
+                報價單位 (乙方)
+              </div>
+              <div className="grid grid-cols-[70px_1fr] gap-y-1.5 px-2">
+                {seller.company && <><span className="text-gray-500">公司/單位</span><span className="font-bold text-gray-800">{seller.company}</span></>}
+                {seller.taxId && <><span className="text-gray-500">統一編號</span><span className="text-gray-800">{seller.taxId}</span></>}
+                {seller.address && <><span className="text-gray-500">聯絡地址</span><span className="text-gray-800">{seller.address}</span></>}
+                {seller.owner && <><span className="text-gray-500">負責人</span><span className="text-gray-800">{seller.owner}</span></>}
+                <><span className="text-gray-500">聯絡人</span><span className="text-gray-800 font-medium">{seller.contact || '_________________'}</span></>
+                <><span className="text-gray-500">聯絡電話</span><span className="text-gray-800">{seller.phone || '_________________'}</span></>
+              </div>
+            </div>
+          </div>
+
+          {/* 產品明細表 */}
+          <div className="mb-8 flex-grow">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="bg-blue-800 text-white">
+                  <th className="py-3 px-4 text-left font-medium w-12 rounded-tl-sm">項次</th>
+                  <th className="py-3 px-4 text-left font-medium">產品名稱 / 規格型號</th>
+                  <th className="py-3 px-4 text-right font-medium w-16">數量</th>
+                  <th className="py-3 px-4 text-center font-medium w-16">單位</th>
+                  <th className="py-3 px-4 text-right font-medium w-28">單價</th>
+                  <th className="py-3 px-4 text-right font-medium w-28 rounded-tr-sm">小計</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item, index) => {
+                  const lineTotal = Number(item.quantity) * Number(item.price);
+                  return (
+                    <tr key={item.id} className="border-b border-gray-200 hover:bg-gray-50">
+                      <td className="py-4 px-4 text-center text-gray-500">{index + 1}</td>
+                      <td className="py-4 px-4">
+                        <div className="font-medium text-gray-800">{item.name || '未命名項目'}</div>
+                        {item.model && <div className="text-xs text-gray-500 mt-1">規格/型號: {item.model}</div>}
+                      </td>
+                      <td className="py-4 px-4 text-right text-gray-800">{item.quantity}</td>
+                      <td className="py-4 px-4 text-center text-gray-800">{item.unit}</td>
+                      <td className="py-4 px-4 text-right text-gray-800">{Number(item.price).toLocaleString()}</td>
+                      <td className="py-4 px-4 text-right font-medium text-gray-800">{lineTotal.toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* 總計區塊 */}
+            <div className="mt-4 flex justify-end">
+              <div className="w-64 border border-gray-200 rounded p-4 bg-gray-50">
+                <div className="flex justify-between mb-2 text-sm text-gray-600">
+                  <span>銷售合計</span>
+                  <span>NT$ {subtotal.toLocaleString()}</span>
+                </div>
+                {meta.hasTax && (
+                  <div className="flex justify-between mb-2 text-sm text-gray-600">
+                    <span>營業稅 (5%)</span>
+                    <span>NT$ {tax.toLocaleString()}</span>
+                  </div>
+                )}
+                <div className="border-t border-gray-300 my-2"></div>
+                <div className="flex justify-between items-end">
+                  <span className="font-bold text-gray-800">總計金額</span>
+                  <span className="text-xl font-bold text-blue-800">NT$ {total.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 報價說明 */}
+          <div className="mb-12">
+            <h3 className="text-base font-bold text-gray-800 border-b-2 border-gray-200 pb-2 mb-3">報價說明與條款</h3>
+            <div className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
+              {notes || '無'}
+            </div>
+          </div>
+
+          {/* 簽名區 (推到最底) */}
+          <div className="mt-auto pt-8 flex justify-between">
+            <div className="w-[45%]">
+              <div className="text-sm font-bold text-gray-500 mb-8">客戶簽收 (簽名或蓋章)</div>
+              <div className="border-b border-gray-400"></div>
+              <div className="text-xs text-gray-400 mt-2">日期：　　年　　月　　日</div>
+            </div>
+            <div className="w-[45%]">
+              <div className="text-sm font-bold text-gray-500 mb-8">報價方確認 (簽名或蓋章)</div>
+              <div className="border-b border-gray-400"></div>
+              <div className="text-xs text-gray-400 mt-2">日期：　　年　　月　　日</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
